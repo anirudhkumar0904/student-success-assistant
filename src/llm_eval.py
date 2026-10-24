@@ -122,12 +122,15 @@ def stability(first, second):
     return same.mean(), len(both), flips
 
 
-def usage_summary(usage_path, model, prompt_version):
-    """Token usage of real API calls for this model + prompt version, per run and in total."""
+def usage_summary(usage_path, model, prompt_version, keys=None):
+    """Token usage of real API calls for this model + prompt version, per run and in total.
+    keys: only count calls for these cache keys (e.g. the evaluation texts), if given."""
     if not usage_path.exists():
         return pd.DataFrame()
     log = pd.DataFrame([json.loads(line) for line in usage_path.read_text(encoding="utf-8").splitlines()])
     log = log[(log.model == model) & (log.prompt_version == prompt_version)]
+    if keys is not None:
+        log = log[log.key.isin(keys)]
     cols = ["prompt_tokens", "output_tokens", "thinking_tokens", "total_tokens"]
     summary = log.groupby("run")[cols].sum()
     summary.loc["all runs"] = summary.sum()

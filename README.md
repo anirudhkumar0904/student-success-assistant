@@ -69,20 +69,62 @@ plan — pin the model, set timeouts, keep a tested fallback, and check quotas a
 
 Results on Claude Haiku 5.5 (`outputs/llm_eval_v1.md`, `outputs/llm_eval_v2.md`):
 
-| | v1 | v2 |
+| | v1 | final v2 |
 |---|---|---|
-| Accuracy, all 60 rows | 80.0% | 90.0% |
-| Accuracy, 37 unique texts | 83.8% | 91.9% |
+| Accuracy, all 60 rows | 80.0% | 81.7% |
+| Accuracy, 37 unique texts | 83.8% | 86.5% |
+| Precision on `wrong` verdicts (no partly correct student told "wrong") | 1.00 | 1.00 |
 | Prompt-injection rows passed | 3/3 | 3/3 |
 | Stability (same verdict on a re-run) | 97.3% | 94.6% |
-| Avg tokens per call | 1,477 | 2,210 |
+| Avg tokens per call | 1,477 | 2,332 |
 
-v2 fixes most `understood → partial` errors but turns one vague-but-on-topic `partial` (E0274) into
-`wrong`.
+**v2 is the final prompt.** There will be no more tuning on these 60 rows.
+- **Small gain:** v2 beats v1 by only one unique text, which is within noise.
+- **What it adds:** per-key-point checks that make every verdict auditable, and an explicit rule that only
+  a contradiction makes an answer `wrong`.
+
+**Feedback-wording fix (not grading tuning):** the first v2 run's `missed` field often stated the correct
+answer. Only the wording instructions for `got_right` / `missed` / `hint` were changed: `missed` now names
+*what* is missing without giving the content, and the hint stays a nudge. The rubric is identical. v2 was
+then re-run from an empty cache.
+- **The first v2 run scored 90.0%; the re-run 81.7%.** 4 unique texts changed verdict: E0274 went
+  `wrong` → `partial` (fixed); E0040, E0545 and E0720 went `understood` → `partial`.
+- **On 60 rows, a few points of accuracy is noise.** Verdicts on borderline answers move with any prompt
+  edit and with re-runs.
+- The old-wording results are kept in `outputs/cache/` as `v2-oldwording`.
+
+### Known errors (Part 2, final prompt v2)
+
+- **Vague but on-topic `partial` → `wrong` (E0274) is the most harmful error type.** Telling a partly
+  correct student they're wrong discourages exactly the at-risk students we want to keep. So precision on
+  `wrong` verdicts matters more than headline accuracy.
+  - The first v2 run made this error (precision on `wrong` 0.91).
+  - The final run doesn't (1.00), but the boundary is fragile.
+- **Proposed v3 rule, not implemented:** `wrong` requires a misconception or no correct claim at all;
+  vague but on-topic = `partial`. Needs a fresh labelled set to validate.
+- **Most common error: `understood` graded `partial`** (E0720, E0040, E0250, E0157, E0545; 11 of 20
+  `understood` rows). Each answer misses one point the labels treat as minor.
+- **Borderline answers are unstable between runs:** E0432 (v1); E0720 and E0080 (first v2 run); E0108
+  and E0333 (final v2).
+  - Production fix: majority vote over 2–3 runs.
+  - When the runs disagree, send the answer to a teacher.
+
+**At-risk feedback:** final v2 graded all 358 explanations written by the 215 at-risk students who
+submitted one (Part 1 threshold 0.368) → `outputs/at_risk_feedback.json`.
+- Only 9 new API calls were needed: the 358 explanations are 47 unique texts, and 38 were already graded
+  during evaluation.
+- Verdicts: 90 understood, 195 partial, 73 wrong.
 
 ## What I'd improve with more time
 
-_To be filled in._
+- **Reply in the student's language.** Feedback is always in simple English, even when the student wrote
+  in Hinglish. Students writing in Hindi, Tamil or Kannada should get feedback in that language, checked
+  by native speakers.
+- **A fresh, larger labelled set** (a few hundred real answers, labelled independently) to measure prompts
+  honestly, then test the proposed v3 rule for `wrong`.
+- **Majority vote over 2–3 runs**, and send to a teacher when they disagree, for borderline answers.
+- **Agree the definition of `understood` with the course team** (core points vs all 4 key points).
+- **Batch API for nightly grading** (half the cost); feedback doesn't need to be instant.
 
 ## Note on AI tools
 

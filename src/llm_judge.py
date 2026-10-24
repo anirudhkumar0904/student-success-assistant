@@ -148,9 +148,9 @@ Rules:
    - "understood": no contradictions, and the core key points are covered clearly and specifically. A minor point may be missing (for example, where the process happens, or price acting as a signal).
    - "partial": no contradictions, but correct and incomplete: important points are missing, or points are covered only vaguely.
 6. key_points_covered: the numbers of the key points with status "covered_clearly" (empty list if none).
-7. Feedback, written to the student ("you"), short and encouraging, in simple English:
-   - got_right: one thing they got right (if nothing, acknowledge the attempt honestly).
-   - missed: the most important thing they missed or got wrong.
+7. Feedback, written to the student ("you"), short and encouraging, in simple English. The student should still have to work out the missing content themselves:
+   - got_right: one thing they got right, in terms of what they actually said (if nothing, acknowledge the attempt honestly).
+   - missed: say WHAT is missing or wrong, without stating the correct content. Name the idea, not the answer — for example "You didn't say where in the plant this happens", not "It happens in the leaves". If a statement is wrong, say which statement is not right, without giving the correct version.
    - hint: one short nudge (a question or pointer) toward what they missed. Do NOT state the answer.
 8. reasoning: 1-2 sentences explaining the verdict from the key point checks, written before you decide it."""
 
