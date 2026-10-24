@@ -203,8 +203,6 @@ LLM: `memo/research_notes_B.md`.
 
 ## AI tools used
 
-_Draft for you to edit._
-
 - **Claude Code (Claude Opus 5.5)** was used as a pair programmer: it wrote and ran the code in `src/` and
   the notebooks, profiled the data, and drafted the README and notebook text. I directed the decisions:
   - the 14-day window
