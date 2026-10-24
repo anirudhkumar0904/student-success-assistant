@@ -22,7 +22,7 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 
-cp .env.example .env      # then add your GEMINI_API_KEY (needed for Part 2)
+cp .env.example .env      # then add ANTHROPIC_API_KEY (Part 2 default) and/or GEMINI_API_KEY
 ```
 
 Then open the notebooks in `notebooks/` in order.
@@ -47,6 +47,18 @@ read-only.
 ## Key findings / evaluation results
 
 _To be filled in as the work is done._
+
+**Part 2 model choice:** the judge runs on **Claude Haiku 5.5** (`claude-haiku-5-5`). It started on
+Gemini Flash and moved twice:
+1. `gemini-3.8-flash` (newest) was overloaded on the free tier — most calls returned
+   `504 DEADLINE_EXCEEDED`; one run completed a single call in ~4.5 minutes.
+2. `gemini-3.6-flash` worked (~12 s/call) but the free tier is capped at 5 requests/minute and
+   **20 requests/day per model** — the v1 evaluation alone needs 76 calls.
+
+The cache was cleared and v1 re-run from scratch on Haiku, so every result comes from one model.
+Provider and model are one line in `src/llm_judge.py` (`PROVIDER, MODEL = ...`); the Gemini code path
+is kept. Production lesson, used in the Part 3 memo: newest ≠ best and a free tier is not a production
+plan — pin the model, set timeouts, keep a tested fallback, and check quotas against volume.
 
 ## What I'd improve with more time
 

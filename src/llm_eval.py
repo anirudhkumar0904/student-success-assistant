@@ -65,12 +65,12 @@ def stability(first, second):
     return same.mean(), len(both), flips
 
 
-def usage_summary(usage_path, prompt_version):
-    """Token usage of real API calls for this prompt version, per run and in total."""
+def usage_summary(usage_path, model, prompt_version):
+    """Token usage of real API calls for this model + prompt version, per run and in total."""
     if not usage_path.exists():
         return pd.DataFrame()
     log = pd.DataFrame([json.loads(line) for line in usage_path.read_text(encoding="utf-8").splitlines()])
-    log = log[log.prompt_version == prompt_version]
+    log = log[(log.model == model) & (log.prompt_version == prompt_version)]
     cols = ["prompt_tokens", "output_tokens", "thinking_tokens", "total_tokens"]
     summary = log.groupby("run")[cols].sum()
     summary.loc["all runs"] = summary.sum()
@@ -116,7 +116,19 @@ def write_report(df, path, model, prompt_version, usage, injections, stable):
         "",
         "## Token usage (real API calls only; cache hits cost nothing)",
         "",
-        md_table(usage) if len(usage) else "_no usage logged_",
-        "",
     ]
+    if len(usage):
+        total = usage.loc["all runs"]
+        lines += [
+            f"**Average per call: {total.total_tokens / total.calls:,.0f} tokens** "
+            f"({total.prompt_tokens / total.calls:,.0f} input + {total.output_tokens / total.calls:,.0f} output) "
+            f"over {total.calls:.0f} calls; {total.total_tokens:,.0f} tokens in total.",
+            "",
+            md_table(usage),
+            "",
+            "_For Claude, output tokens include the model's thinking (not reported separately)._",
+            "",
+        ]
+    else:
+        lines += ["_no usage logged_", ""]
     path.write_text("\n".join(lines), encoding="utf-8")

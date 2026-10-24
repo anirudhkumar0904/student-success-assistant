@@ -5,6 +5,7 @@ matplotlib>=3.7
 scikit-learn>=1.3
 
 # LLM (Part 2) + config
+anthropic>=2.0
 google-genai>=1.0
 python-dotenv>=1.0
 

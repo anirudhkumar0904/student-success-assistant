@@ -1,8 +1,10 @@
-"""Part 2: grade student explanations with Gemini and return structured feedback.
+"""Part 2: grade student explanations with an LLM and return structured feedback.
 
 Flow per explanation:
-  strip filler suffixes -> cache lookup (lesson_id + normalized text) -> Gemini call with a
-  response schema -> validate with pydantic -> log token usage -> save to cache.
+  strip filler suffixes -> cache lookup (lesson_id + normalized text) -> LLM call with an
+  enforced output schema -> validate with pydantic -> log token usage -> save to cache.
+
+Two providers are supported: Anthropic (Claude) and Google (Gemini). Switch with one line below.
 """
 
 import json
@@ -12,21 +14,29 @@ import time
 from pathlib import Path
 from typing import Literal
 
+import anthropic
+import httpx
 from dotenv import load_dotenv
 from google import genai
 from google.genai import errors, types
 from pydantic import BaseModel, ValidationError
 
-MODEL = "gemini-3.8-flash"  # current Flash model (ai.google.dev/gemini-api/docs/models)
-# Temperature is left at the model default: Google's Gemini 3 guidance is not to lower it.
-# Run-to-run stability is measured instead (see the Part 2 notebook).
+# The one line to change to switch provider/model. Gemini alternative: "gemini", "gemini-3.6-flash".
+PROVIDER, MODEL = "anthropic", "claude-haiku-5-5"
+# History: gemini-3.8-flash timed out (504) on the free tier; gemini-3.6-flash then hit the free-tier
+# cap of 20 requests/day per model. See README / Part 2 notebook.
+# Temperature is left at the model default (Claude Haiku 5.5 rejects other values; Google advises
+# against lowering it for Gemini 3). Run-to-run stability is measured instead.
 PROMPT_VERSION = "v1"
 
 CACHE_DIR = Path(__file__).resolve().parent.parent / "outputs" / "cache"
 LESSONS_PATH = Path(__file__).resolve().parent.parent / "data" / "raw" / "lessons.md"
 
 MAX_RETRIES = 5
-MIN_SECONDS_BETWEEN_CALLS = 4  # stay under free-tier requests-per-minute
+TIMEOUT_SECONDS = 120  # without a timeout a slow request can hang forever; timeouts are retried
+MAX_TOKENS = 16000  # Haiku 5.5 thinks by default; thinking counts toward this limit
+# Pause between calls. Gemini free tier allowed ~5 requests/minute (429s at 4 s spacing).
+SECONDS_BETWEEN_CALLS = {"gemini": 13, "anthropic": 1}
 
 # Sign-offs students append to many answers. They carry no content, so they are removed
 # before grading and caching (same answer + different sign-off = one LLM call).
@@ -113,46 +123,94 @@ def build_prompt_v1(lesson_id, lesson, text):
             f"<student_explanation>\n{safe_text}\n</student_explanation>")
 
 
-# ---------- Gemini call ----------
+# ---------- LLM calls ----------
+
+class InvalidOutput(Exception):
+    """The model answered, but not with a usable graded result (e.g. a refusal). Retried."""
+
 
 def make_client():
-    """API key comes from the environment (.env), never from code."""
-    load_dotenv()
-    api_key = os.environ.get("GEMINI_API_KEY")
+    """API keys come from the environment (.env), never from code."""
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+    key_name = "ANTHROPIC_API_KEY" if PROVIDER == "anthropic" else "GEMINI_API_KEY"
+    api_key = os.environ.get(key_name)
     if not api_key:
-        raise RuntimeError("GEMINI_API_KEY is not set. Copy .env.example to .env and add your key.")
-    return genai.Client(api_key=api_key)
+        raise RuntimeError(f"{key_name} is not set. Copy .env.example to .env and add your key.")
+    if PROVIDER == "anthropic":
+        # max_retries=0: retries are handled by call_llm below, in one place for both providers.
+        return anthropic.Anthropic(api_key=api_key, timeout=TIMEOUT_SECONDS, max_retries=0)
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=TIMEOUT_SECONDS * 1000))
 
 
-def call_gemini(client, system_prompt, user_prompt):
-    """One graded call with retries. Returns (Grading, usage dict)."""
+def _call_claude_once(client, system_prompt, user_prompt):
+    """Structured output: the response must match the Grading schema; the SDK parses it."""
+    response = client.messages.parse(
+        model=MODEL,
+        max_tokens=MAX_TOKENS,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+        output_format=Grading,
+    )
+    if response.stop_reason != "end_turn" or response.parsed_output is None:
+        raise InvalidOutput(f"stop_reason={response.stop_reason}")
+    grading = Grading.model_validate(response.parsed_output.model_dump())  # schema check on every response
+    usage = response.usage
+    return grading, {
+        "prompt_tokens": usage.input_tokens,
+        "output_tokens": usage.output_tokens,  # includes thinking tokens for Claude
+        "thinking_tokens": 0,  # not reported separately by the Anthropic API
+        "total_tokens": usage.input_tokens + usage.output_tokens,
+    }
+
+
+def _call_gemini_once(client, system_prompt, user_prompt):
     config = types.GenerateContentConfig(
         system_instruction=system_prompt,
         response_mime_type="application/json",
         response_schema=Grading,
     )
+    response = client.models.generate_content(model=MODEL, contents=user_prompt, config=config)
+    grading = Grading.model_validate_json(response.text)  # schema check on every response
+    usage = response.usage_metadata
+    return grading, {
+        "prompt_tokens": usage.prompt_token_count or 0,
+        "output_tokens": usage.candidates_token_count or 0,
+        "thinking_tokens": usage.thoughts_token_count or 0,
+        "total_tokens": usage.total_token_count or 0,
+    }
+
+
+def retry_reason(error):
+    """Why an error is worth retrying, or None if it should fail immediately."""
+    if isinstance(error, (ValidationError, InvalidOutput)):
+        return f"invalid output: {error}"[:120]
+    if isinstance(error, anthropic.RateLimitError):
+        return "rate limit (429)"
+    if isinstance(error, anthropic.APIStatusError):
+        return f"server error {error.status_code}" if error.status_code >= 500 else None
+    if isinstance(error, anthropic.APIConnectionError):  # includes timeouts
+        return "connection error / timeout"
+    if isinstance(error, errors.APIError):
+        return f"API error {error.code}" if error.code == 429 or error.code >= 500 else None
+    if isinstance(error, httpx.TimeoutException):
+        return f"no response within {TIMEOUT_SECONDS}s"
+    return None
+
+
+def call_llm(client, system_prompt, user_prompt):
+    """One graded call with retries and backoff. Returns (Grading, usage dict)."""
+    call_once = _call_claude_once if PROVIDER == "anthropic" else _call_gemini_once
     for attempt in range(1, MAX_RETRIES + 1):
         try:
-            response = client.models.generate_content(model=MODEL, contents=user_prompt, config=config)
-            grading = Grading.model_validate_json(response.text)  # schema check on every response
-            usage = response.usage_metadata
-            return grading, {
-                "prompt_tokens": usage.prompt_token_count or 0,
-                "output_tokens": usage.candidates_token_count or 0,
-                "thinking_tokens": usage.thoughts_token_count or 0,
-                "total_tokens": usage.total_token_count or 0,
-            }
-        except errors.APIError as e:
-            # 429 = rate limit, 5xx = temporary server problem -> wait and retry. Others fail fast.
-            if e.code != 429 and e.code < 500:
-                raise
-            reason = f"API error {e.code}"
-        except ValidationError as e:
-            reason = f"invalid JSON/schema: {e.errors()[0]['msg']}"
-        wait = 2 ** attempt  # 2, 4, 8, 16, 32 seconds
+            return call_once(client, system_prompt, user_prompt)
+        except Exception as error:
+            reason = retry_reason(error)
+            if reason is None:
+                raise  # e.g. bad request or auth error: retrying won't help
+        wait = min(60, 5 * 2 ** (attempt - 1))  # 5, 10, 20, 40, 60 s: outlasts a per-minute quota window
         print(f"  retry {attempt}/{MAX_RETRIES} in {wait}s ({reason})")
         time.sleep(wait)
-    raise RuntimeError(f"Gemini call failed after {MAX_RETRIES} attempts")
+    raise RuntimeError(f"{MODEL} call failed after {MAX_RETRIES} attempts")
 
 
 # ---------- Cache + usage log ----------
@@ -169,7 +227,7 @@ def save_cache(cache, path):
 def log_usage(usage, key, run, path):
     """Append one line per real API call (cache hits cost nothing and are not logged)."""
     with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "model": MODEL,
+        f.write(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "provider": PROVIDER, "model": MODEL,
                             "prompt_version": PROMPT_VERSION, "run": run, "key": key, **usage}) + "\n")
 
 
@@ -198,12 +256,12 @@ def judge_explanations(rows, client=None, cache_dir=CACHE_DIR, run="main"):
             client = client or make_client()
             text = strip_fillers(row["explanation_text"])
             prompt = build_prompt_v1(row["lesson_id"], lessons[row["lesson_id"]], text)
-            grading, usage = call_gemini(client, SYSTEM_V1, prompt)
+            grading, usage = call_llm(client, SYSTEM_V1, prompt)
             cache[key] = grading.model_dump()
             save_cache(cache, cache_path)  # save every call so a crash loses nothing
             log_usage(usage, key, run, usage_path)
             print(f"{row['explanation_id']}: {grading.verdict} ({usage['total_tokens']} tokens)")
-            time.sleep(MIN_SECONDS_BETWEEN_CALLS)
+            time.sleep(SECONDS_BETWEEN_CALLS[PROVIDER])
 
         judgement = Judgement(explanation_id=row["explanation_id"], **cache[key])
         results.append({**judgement.model_dump(), "from_cache": from_cache})
