@@ -29,6 +29,11 @@ PROVIDER, MODEL = "anthropic", "claude-haiku-5-5"
 # against lowering it for Gemini 3). Run-to-run stability is measured instead.
 PROMPT_VERSION = "v2"  # default prompt; "v1" is kept and can still be run (see PROMPTS below)
 
+# False: use only the committed cache in outputs/cache/ — no API key needed, results match the reports.
+# True: call the API again for every text and overwrite the cache (a cold re-run; numbers will differ
+# slightly, because the LLM is not deterministic). Needs ANTHROPIC_API_KEY in .env.
+REFRESH = False
+
 CACHE_DIR = Path(__file__).resolve().parent.parent / "outputs" / "cache"
 LESSONS_PATH = Path(__file__).resolve().parent.parent / "data" / "raw" / "lessons.md"
 
@@ -280,6 +285,8 @@ def log_usage(usage, key, prompt_version, run, path):
 
 # ---------- Main entry point ----------
 
+_REFRESHED = set()  # (cache file, key) pairs already re-graded in this session when REFRESH is True
+
 def judge_explanations(rows, prompt_version=PROMPT_VERSION, client=None, cache_dir=CACHE_DIR, run="main"):
     """Grade each row (needs explanation_id, lesson_id, explanation_text) with one prompt version.
 
@@ -299,8 +306,13 @@ def judge_explanations(rows, prompt_version=PROMPT_VERSION, client=None, cache_d
 
     for row in rows:
         key = cache_key(row["lesson_id"], row["explanation_text"], prompt_version)
-        from_cache = key in cache
+        # With REFRESH, each unique text is re-graded once per session, then reused for its duplicates.
+        from_cache = key in cache and not (REFRESH and (cache_path.name, key) not in _REFRESHED)
         if not from_cache:
+            if not REFRESH:
+                raise RuntimeError(f"{row['explanation_id']} is not in the cache ({cache_path.name}). "
+                                   "Set REFRESH = True in src/llm_judge.py to call the API.")
+            _REFRESHED.add((cache_path.name, key))
             client = client or make_client()
             text = strip_fillers(row["explanation_text"])
             user_prompt = build_prompt_v1(row["lesson_id"], lessons[row["lesson_id"]], text)

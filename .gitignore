@@ -1,8 +1,8 @@
 # Secrets — never commit API keys
 .env
 
-# Cached intermediate results / LLM responses (regenerated, not source)
-outputs/cache/
+# outputs/cache/ (LLM judgements + token usage log) IS committed, so the notebooks run
+# without an API key. See REFRESH in src/llm_judge.py.
 
 # Python
 __pycache__/

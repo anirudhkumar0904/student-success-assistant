@@ -28,7 +28,8 @@ rules are not optional.
 
 - `notebooks/` — one notebook per part.
 - `src/`       — small, reusable plain functions (loading, cleaning, features).
-- `outputs/`   — `charts/` and `json/` are committed; `cache/` (LLM responses,
-                 intermediates) is gitignored.
+- `outputs/`   — `charts/`, `json/` and `cache/` (LLM judgements from the final run + token
+                 usage log) are committed, so the notebooks run without an API key
+                 (`REFRESH = False` in `src/llm_judge.py`).
 - `memo/`      — Part 3 research memo.
 - `data/raw/`  — provided dataset (read-only; never edit in place).

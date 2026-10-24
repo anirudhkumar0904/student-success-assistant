@@ -27,26 +27,28 @@ python -m venv .venv
 pip install -r requirements.txt
 
 cp .env.example .env      # Windows: copy .env.example .env
-# then put your key in .env:  ANTHROPIC_API_KEY=...   (needed for Part 2 only)
+# optional: put your key in .env:  ANTHROPIC_API_KEY=...   (only needed for REFRESH = True, see below)
 ```
 
 Run the notebooks **in this order** (open them in Jupyter, or run headless from the repo root):
 
 ```bash
 jupyter nbconvert --to notebook --execute --inplace notebooks/part1_ml.ipynb     # no key needed
-jupyter nbconvert --to notebook --execute --inplace notebooks/part2_llm.ipynb    # needs ANTHROPIC_API_KEY
+jupyter nbconvert --to notebook --execute --inplace notebooks/part2_llm.ipynb    # no key needed (cache)
 jupyter nbconvert --to notebook --execute --inplace notebooks/part3_bonus.ipynb  # no key needed
 ```
 
 1. **Part 1** writes `outputs/risk_scores.csv` (risk score + at-risk flag per student), which Part 2
    uses, plus charts and JSON in `outputs/`. It is deterministic (seed 42).
-2. **Part 2** calls Claude Haiku 5.5. LLM responses are cached in `outputs/cache/` (gitignored).
-   - **A fresh clone makes 161 API calls:** v1 + v2 evaluations, stability passes and at-risk feedback.
-     Measured: **about 10 minutes, under $0.10.** Re-runs are instant from the cache.
-   - **The LLM is not deterministic.** A fresh run regenerates `outputs/llm_eval_*.md` with slightly
-     different numbers (see the run-to-run table under Part 2 below).
-   - **Skipped in a fresh clone:** the cell comparing v2's old and fixed feedback wording, because its
-     archive is only in the local cache.
+2. **Part 2** uses Claude Haiku 5.5. The LLM judgements from the final run are **committed** in
+   `outputs/cache/`, so there are two modes, set by one flag at the top of `src/llm_judge.py`:
+   - **`REFRESH = False` (default):** everything runs from the committed cache. **No API key, no API
+     calls, and exactly the committed results.** A text that isn't in the cache raises a clear error.
+   - **`REFRESH = True`:** every unique text is graded again by the API and the cache is overwritten.
+     Needs `ANTHROPIC_API_KEY` in `.env`. Measured from a fresh clone: **161 API calls, about 10 minutes,
+     under $0.10.**
+   - **A cold re-run gives slightly different numbers**, because the LLM is not deterministic. See the
+     run-to-run spread under Part 2 below.
    - **Provider:** one line in `src/llm_judge.py`: `PROVIDER, MODEL = "anthropic", "claude-haiku-5-5"`. The
      Gemini path also works, with `GEMINI_API_KEY`.
 3. **Part 3 bonus** trains TF-IDF + LR on the 60 labelled rows. No key needed.
@@ -104,19 +106,20 @@ Production lesson for Part 3: newest ≠ best, and a free tier is not a producti
 missing / contradicted) *before* choosing a verdict. Results on the 60 labelled rows
 (`outputs/llm_eval_v1.md`, `outputs/llm_eval_v2.md`):
 
+Ranges cover two complete cold runs from an empty cache (the committed run and the fresh-clone test);
+the committed reports and cache are from the first.
+
 | | v1 | final v2 |
 |---|---|---|
-| Accuracy, all 60 rows | 80.0% | 81.7% |
-| Accuracy, 37 unique texts | 83.8% | 86.5% |
+| Accuracy, all 60 rows | 80.0% (both runs) | **78.3%–81.7%** |
+| Accuracy, 37 unique texts | 83.8% (both runs) | **81.1%–86.5%** |
 | Precision on `wrong` verdicts (no partly correct student told "wrong") | 1.00 | 1.00 |
 | Prompt-injection attempts resisted | 3/3 | 3/3 |
-| Stability (same verdict on a re-run; varies by run, see below) | 97.3% | 94.6% |
+| Stability (same verdict on a re-run) | 89.2%–97.3% | 94.6%–97.3% |
 | Avg tokens per call | 1,477 | 2,332 |
 
-**Run-to-run spread.** The fresh-clone test repeated the whole evaluation from an empty cache. On unique
-texts, the committed run gave v1 83.8% / v2 86.5%; the second run gave v1 83.8% / v2 **81.1%**.
-Stability ranged from 89% to 97% across runs. **Neither prompt is reliably better on these 37 texts.**
-The committed reports are from the first run.
+**Run-to-run spread.** Repeating the whole evaluation from an empty cache moves v2 by about 5 points on
+unique texts. **Neither prompt is reliably better on these 37 texts.**
 
 **Why v2 is final:** accuracy is tied with v1 within noise on 37 texts. But v2 has the fixed "missed"
 wording, and per-key-point checks that make each verdict auditable. The cost is ~58% more tokens and
@@ -223,7 +226,7 @@ _Draft for you to edit._
 | `src/` | small plain functions: `data.py` (load + logged cleaning), `features.py` (14-day features), `model.py` (Pipelines, baselines, CV), `llm_judge.py` (prompts, LLM calls, cache), `llm_eval.py` (accuracy, reports) |
 | `outputs/charts/`, `outputs/json/` | charts and JSON results (committed) |
 | `outputs/risk_scores.csv`, `outputs/at_risk_feedback.json`, `outputs/llm_eval_*.md` | Part 1 / Part 2 results (committed) |
-| `outputs/cache/` | cached LLM responses + token usage log (gitignored) |
+| `outputs/cache/` | LLM judgements from the final run + token usage log (committed; `REFRESH = False` runs from it) |
 | `memo/` | Part 3 research memo and notes |
 | `data/raw/` | provided dataset (read-only) |
 | `CLAUDE.md` | working rules for this repo |
