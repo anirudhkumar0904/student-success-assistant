@@ -48,21 +48,29 @@ def make_always_no():
     return DummyClassifier(strategy="constant", constant=0)
 
 
-class FewAttemptsRule(ClassifierMixin, BaseEstimator):
-    """Baseline B: predict dropout if n_attempts <= N.
+class ThresholdRule(ClassifierMixin, BaseEstimator):
+    """Baseline B: a one-line rule, predict dropout if X[column] <= N (or >= N).
 
     N is chosen on the training data (the value with the best F1), so in CV it
-    never sees the test fold.
+    never sees the test fold. Missing values (no attempts) are never flagged.
     """
 
+    def __init__(self, column="mean_score", direction="<="):
+        self.column = column
+        self.direction = direction
+
+    def _flag(self, values, n):
+        return values <= n if self.direction == "<=" else values >= n
+
     def fit(self, X, y):
-        candidates = sorted(X["n_attempts"].unique())
-        self.n_ = max(candidates, key=lambda n: f1_score(y, X["n_attempts"] <= n))
+        values = X[self.column]
+        candidates = sorted(values.dropna().unique())
+        self.n_ = max(candidates, key=lambda n: f1_score(y, self._flag(values, n)))
         self.classes_ = np.array([0, 1])
         return self
 
     def predict(self, X):
-        return (X["n_attempts"] <= self.n_).astype(int).to_numpy()
+        return self._flag(X[self.column], self.n_).astype(int).to_numpy()
 
     def predict_proba(self, X):
         flagged = self.predict(X)
