@@ -72,12 +72,12 @@ own evaluation, data privacy and Indian-language support do.**
 
 ---
 
-## 3. Suggested recommendation (your decision; edit as you see fit)
+## 3. ~~Suggested recommendation~~ OUTDATED DRAFT (being rewritten; do not use)
 
-> ⚠️ **Note added at merge, 24 Oct:** this draft was written while Part 2 still ran on Gemini. Two of its
-> premises are now out of date: the prototype is **evaluated on Claude Haiku 5.5, not Gemini**, because
-> Gemini couldn't be evaluated on the free tier, and Haiku has now been run on the same texts. The
-> recommendation text below is left unchanged for you to revise.
+> ⚠️ **OUTDATED.** This draft was written while Part 2 still ran on Gemini, and its premises no longer
+> hold: the prototype is **evaluated on Claude Haiku 5.5, not Gemini**, because Gemini couldn't be
+> evaluated on the free tier, and Haiku has now been run on the same texts. The recommendation is being
+> rewritten. The text below is kept only for reference.
 
 **Draft:** use **Gemini 3.8 Flash on the paid tier through the Batch API**, which costs about $62 a month now and $124 from Jan 2027.
 - Our prototype is already evaluated on it.

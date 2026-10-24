@@ -1,7 +1,7 @@
 # Part 3B research notes: when to use a small ML model instead of an LLM
 
 Gathered 24 Oct 2026. A draft for you to rewrite in your own words; this isn't the final memo text.
-Numbers marked "(ours)" come from your repo. Update them if v2 changes anything.
+Numbers marked "(ours)" come from your repo, updated to the final v2 prompt (24 Oct).
 
 ---
 
@@ -17,10 +17,10 @@ Numbers marked "(ours)" come from your repo. Update them if v2 changes anything.
 
 | | Small ML model (e.g. logistic regression, TF-IDF + LR, gradient boosting) | LLM (e.g. Claude Haiku 5.5, Gemini Flash) |
 |---|---|---|
-| **Cost** | Practically free to run: TF-IDF + LR predicts 1,000 explanations in about 50 ms on one CPU core (ours) | Pay per token: about $0.25 per 1,000 calls with Haiku 5.5 (ours, 1,217 input + 260 output tokens), about $21/month at 85,000 calls. Bigger models cost 10–20× more. |
+| **Cost** | Practically free to run: TF-IDF + LR predicts 1,000 explanations in about 50 ms on one CPU core (ours) | Pay per token: about $0.41 per 1,000 calls with Haiku 5.5 (ours, final v2 prompt: 1,884 input + 448 output tokens), about $35/month at 85,000 calls (batch $18). Bigger models cost 10–20× more. |
 | **Speed** | Milliseconds, can run anywhere | Seconds per call (network + generation); rate limits apply. The free tier capped us at about 5 requests/min and 20/day. |
 | **Accuracy** | Strong when there's enough labelled data that resembles production data; weak on new wording | Strong with no training data; can be tuned with prompt and rubric changes; can be wrong on borderline cases (all 12 v1 errors were understood → partial) |
-| **Explainability** | High: coefficients, feature importance, exact rules | Medium: gives a stated reason per verdict, but the reason isn't guaranteed to match how it actually decided. Not fully deterministic (97.3% stable in our test). |
+| **Explainability** | High: coefficients, feature importance, exact rules | Medium: gives a stated reason per verdict, but the reason isn't guaranteed to match how it actually decided. Not fully deterministic (94.6–97.3% of verdicts identical on a re-run in our test). |
 | **Data needed** | Hundreds to thousands of labelled examples for text; works well on structured data from the start | Zero to a few dozen labelled examples, enough to evaluate and tune the prompt |
 | **Maintenance** | Retrain when the data changes; monitor for drift; low running complexity | Vendors update and retire models (Gemini 3.6 Flash is already marked deprecated, and prices change). Re-run the evaluation on every model change; prompts need versioning; injection attacks need defending (3 in our data). |
 
@@ -53,8 +53,9 @@ Numbers marked "(ours)" come from your repo. Update them if v2 changes anything.
 
 **Part 2 (judging explanations): an LLM, for now.**
 - Only 60 labelled rows (37 unique texts). TF-IDF + LR scored 73% on a random split but **19% when whole templates were held out** (a most-frequent-label baseline scores 12% on the same folds), so it was memorising templates rather than learning to grade (ours).
-- The LLM reached 83.8% on unique texts with **no training data** (v1, ours), handled Hinglish, resisted all 3 injection attempts, and writes the feedback, which a classifier can't do at all.
-- Cost is about $21/month at 50,000 students. Not a concern.
+- The LLM reached 83.8% (v1) and 86.5% (final v2) on unique texts with **no training data** (ours), handled Hinglish, resisted all 3 injection attempts, and writes the feedback, which a classifier can't do at all.
+- **On 37 unique texts, differences of a few points between prompts are within noise.** One text is about 3 points. A plain re-run changes about 2 verdicts, and a feedback-wording edit moved 4. So v1 and v2 are effectively tied on accuracy (ours).
+- Cost is about $35/month (batch $18) at 50,000 students. Not a concern.
 
 **Being honest about 60 rows:** 60 rows (37 unique, a few templates per lesson) is far too few to train or fairly judge a text classifier. The 73% vs 19% gap shows that. Neither model's accuracy here would hold for real, varied student writing.
 

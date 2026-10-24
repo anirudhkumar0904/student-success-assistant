@@ -1,119 +1,176 @@
 # Student Success Assistant
 
-Take-home task (Applied AI Engineer, Round 2). Predict which students are at risk of
-dropping out, give at-risk students useful feedback on their own lesson explanations,
-and recommend how to run it in production.
+Take-home task (Applied AI Engineer, Round 2). Predict which students are at risk of dropping out, give
+at-risk students useful feedback on their own lesson explanations, and recommend how to run it in
+production.
 
-## Parts
+- **Part 1 — Data science & ML:** explore, clean, build features, train a dropout model vs baselines,
+  evaluate with precision / recall / F1. → `notebooks/part1_ml.ipynb`
+- **Part 2 — AI / LLM:** judge each explanation (`understood` / `partial` / `wrong`) against the lesson
+  key points, write short feedback, return structured JSON, evaluate on the 60 labelled rows, and run it
+  for the at-risk students from Part 1. → `notebooks/part2_llm.ipynb`
+- **Part 3 — Research memo:** which LLM for 50k students/month, and when a small ML model beats an LLM
+  (with the TF-IDF + LogReg bonus). → `memo/`, `notebooks/part3_bonus.ipynb`
 
-- **Part 1 — Data science & ML:** explore, clean, build features, train a dropout
-  model vs a baseline, evaluate with precision/recall/F1. → `notebooks/part1_ml.ipynb`
-- **Part 2 — AI/LLM:** judge each explanation (`understood` / `partial` / `wrong`)
-  against the lesson key points, generate short feedback, return structured JSON,
-  evaluate on the 60 labelled rows. → `notebooks/part2_llm.ipynb`
-- **Part 3 — Research memo:** LLM choice for 50k students/month, and when to use a
-  small ML model vs an LLM (with the optional TF-IDF + LogReg bonus).
-  → `memo/research_memo.md`, `notebooks/part3_bonus.ipynb`
+## How to run
 
-## Setup
+Tested with Python 3.12 on Windows.
 
 ```bash
+git clone <repo-url> && cd student-success
 python -m venv .venv
 # Windows: .venv\Scripts\activate   |   macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
 
-cp .env.example .env      # then add ANTHROPIC_API_KEY (Part 2 default) and/or GEMINI_API_KEY
+cp .env.example .env      # Windows: copy .env.example .env
+# then put your key in .env:  ANTHROPIC_API_KEY=...   (needed for Part 2 only)
 ```
 
-Then open the notebooks in `notebooks/` in order.
+Run the notebooks **in this order** (open them in Jupyter, or run headless from the repo root):
 
-## Data
+```bash
+jupyter nbconvert --to notebook --execute --inplace notebooks/part1_ml.ipynb     # no key needed
+jupyter nbconvert --to notebook --execute --inplace notebooks/part2_llm.ipynb    # needs ANTHROPIC_API_KEY
+jupyter nbconvert --to notebook --execute --inplace notebooks/part3_bonus.ipynb  # no key needed
+```
 
-Provided dataset in `data/raw/` (synthetic, 500 students, 3 lessons, course ran
-Jun–30 Sep 2026). See `data/raw/README.md` for the file/column list. Treated as
-read-only.
+1. **Part 1** writes `outputs/risk_scores.csv` (risk score + at-risk flag per student), which Part 2
+   uses, plus charts and JSON in `outputs/`. It is deterministic (seed 42).
+2. **Part 2** calls Claude Haiku 5.5. LLM responses are cached in `outputs/cache/` (gitignored), so a
+   **fresh clone makes about 170 API calls** (v1 + v2 evaluations, stability passes and at-risk
+   feedback): roughly 30–40 minutes, about $0.07. Re-runs are instant from the cache. The LLM is not fully
+   deterministic (about 95% of verdicts are identical on a re-run), so a fresh run reproduces the
+   committed `outputs/llm_eval_*.md` closely but not exactly. The provider is one line in
+   `src/llm_judge.py`: `PROVIDER, MODEL = "anthropic", "claude-haiku-5-5"`. The Gemini path also works,
+   with `GEMINI_API_KEY`.
+3. **Part 3 bonus** trains TF-IDF + LR on the 60 labelled rows. No key needed.
 
-## Repo layout
+Keys are only read from `.env` (gitignored), never from code. `.env.example` shows the shape.
 
-| Path | What |
-|---|---|
-| `notebooks/` | one notebook per part |
-| `src/` | small plain functions (loading, cleaning, features) |
-| `outputs/charts/`, `outputs/json/` | generated charts and JSON (committed) |
-| `outputs/cache/` | cached LLM responses / intermediates (gitignored) |
-| `memo/` | Part 3 research memo |
-| `CLAUDE.md` | working rules for this repo |
+## Key findings
 
-## Key findings / evaluation results
+### Part 1: dropout prediction
 
-_To be filled in as the work is done._
+**Data checks (all logged in `src/data.py`):**
+- 3 quiz scores of `999` were dropped.
+- 18 duplicate attempts were dropped.
+- 95 missing `time_spent_min` values are imputed inside the model Pipeline, per CV fold.
+- 21 missing `age_group` and 16 missing `device` values become `"unknown"`.
+- 25% of the 500 students dropped out.
 
-**Part 2 model choice:** the judge runs on **Claude Haiku 5.5** (`claude-haiku-5-5`). It started on
-Gemini Flash and moved twice:
-1. `gemini-3.8-flash` (newest) was overloaded on the free tier — most calls returned
-   `504 DEADLINE_EXCEEDED`; one run completed a single call in ~4.5 minutes.
-2. `gemini-3.6-flash` worked (~12 s/call) but the free tier is capped at 5 requests/minute and
-   **20 requests/day per model** — the v1 evaluation alone needs 76 calls.
+**Leaks found and excluded:**
+- **`refund_requested`:** 91% of students who asked for a refund dropped out, against 5% of the rest.
+  A refund is part of leaving, not an early sign of it.
+- **Full-history activity:** it scores AUC 0.90, but only because every dropout has already stopped by
+  then.
+- The model therefore only sees each student's **first 14 days**. That's the longest window in which most
+  dropouts (58%) are still active.
 
-The cache was cleared and v1 re-run from scratch on Haiku, so every result comes from one model.
-Provider and model are one line in `src/llm_judge.py` (`PROVIDER, MODEL = ...`); the Gemini code path
-is kept. Production lesson, used in the Part 3 memo: newest ≠ best and a free tier is not a production
-plan — pin the model, set timeouts, keep a tested fallback, and check quotas against volume.
+**Surprise:** in the first 14 days, dropouts are *ahead*, not behind. They start sooner, reach more lessons
+and score lower: "rushing". The number of lessons reached is the strongest feature.
 
-**Part 2 prompt v1 → v2:** v2 changes only the grading rubric (v1 is kept and still runs). Two caveats:
-- **v2's accuracy is optimistic.** The rubric was tuned on the same 60 labelled rows it is measured on;
-  a fresh labelled set is needed to confirm the gain.
-- **The labels define `understood` as "core key points correct and specific", not "all 4 key points".**
-  This differs slightly from `lessons.md` ("covers the key points correctly"). v2 follows the labels;
-  in production the definition should be agreed with the course team.
+5-fold stratified CV (seed 42), mean ± std across folds, default 0.5 threshold:
 
-Results on Claude Haiku 5.5 (`outputs/llm_eval_v1.md`, `outputs/llm_eval_v2.md`):
+| Model | Precision | Recall | F1 | AUC |
+|---|---|---|---|---|
+| A: always "no dropout" (accuracy 75%!) | 0.00 | 0.00 | 0.00 | 0.50 |
+| B1: `n_lessons >= N` (one-line rule) | 0.27 | 0.95 | 0.42 | 0.55 |
+| B2: `mean_score <= N` (one-line rule) | 0.35 | 0.70 | 0.46 ± 0.06 | 0.64 ± 0.06 |
+| **Logistic regression (final)** | 0.46 | 0.68 | **0.54 ± 0.06** | **0.77 ± 0.04** |
+| Random forest (not better, dropped) | 0.46 | 0.62 | 0.52 ± 0.06 | 0.75 ± 0.05 |
+
+**Threshold:** recall matters more than precision here. Missing an at-risk student costs more than an
+unneeded nudge. The threshold is the highest one with recall ≥ 0.8 on out-of-fold predictions:
+- **Threshold 0.368: recall 0.80, precision 0.39.** 257 of 500 students are flagged, 1.6× better than
+  random flagging.
+- Choosing the threshold on the same out-of-fold predictions makes these numbers slightly optimistic.
+
+### Part 2: LLM judge and feedback
+
+**Model: Claude Haiku 5.5.** Gemini was tried first, but its free tier couldn't run the evaluation:
+- `gemini-3.8-flash` mostly returned `504` timeouts.
+- `gemini-3.6-flash` is capped at **20 requests/day per model**, and one evaluation needs 76 calls.
+
+The cache was cleared and everything was re-run on Haiku, so every result comes from one model.
+Production lesson for Part 3: newest ≠ best, and a free tier is not a production plan.
+
+**Prompt v1 → final v2:** v2 changes only the grading rubric. It checks each key point (clear / vague /
+missing / contradicted) *before* choosing a verdict. Results on the 60 labelled rows
+(`outputs/llm_eval_v1.md`, `outputs/llm_eval_v2.md`):
 
 | | v1 | final v2 |
 |---|---|---|
 | Accuracy, all 60 rows | 80.0% | 81.7% |
 | Accuracy, 37 unique texts | 83.8% | 86.5% |
 | Precision on `wrong` verdicts (no partly correct student told "wrong") | 1.00 | 1.00 |
-| Prompt-injection rows passed | 3/3 | 3/3 |
+| Prompt-injection attempts resisted | 3/3 | 3/3 |
 | Stability (same verdict on a re-run) | 97.3% | 94.6% |
 | Avg tokens per call | 1,477 | 2,332 |
 
-**v2 is the final prompt.** There will be no more tuning on these 60 rows.
-- **Small gain:** v2 beats v1 by only one unique text, which is within noise.
-- **What it adds:** per-key-point checks that make every verdict auditable, and an explicit rule that only
-  a contradiction makes an answer `wrong`.
+**Why v2 is final:** accuracy is tied with v1 within noise on 37 texts. But v2 has the fixed "missed"
+wording, and per-key-point checks that make each verdict auditable. The cost is ~58% more tokens and
+slightly lower stability: still about $35/month at 50,000 students.
 
-**Feedback-wording fix (not grading tuning):** the first v2 run's `missed` field often stated the correct
-answer. Only the wording instructions for `got_right` / `missed` / `hint` were changed: `missed` now names
-*what* is missing without giving the content, and the hint stays a nudge. The rubric is identical. v2 was
-then re-run from an empty cache.
-- **The first v2 run scored 90.0%; the re-run 81.7%.** 4 unique texts changed verdict: E0274 went
-  `wrong` → `partial` (fixed); E0040, E0545 and E0720 went `understood` → `partial`.
-- **On 60 rows, a few points of accuracy is noise.** Verdicts on borderline answers move with any prompt
-  edit and with re-runs.
-- The old-wording results are kept in `outputs/cache/` as `v2-oldwording`.
+**Feedback-wording fix (not grading tuning):** the first v2 run's `missed` field often stated the
+correct answer. Only the wording instructions for `got_right` / `missed` / `hint` were changed: `missed`
+now names *what* is missing without giving the content, and the hint stays a nudge. The rubric is
+identical. That first run scored 90.0%; the re-run from an empty cache scored 81.7%:
+- **4 unique texts changed verdict.** E0274 went `wrong` → `partial` (fixed); E0040, E0545 and E0720 went
+  `understood` → `partial`.
+- **So on 60 rows, a few points of accuracy is noise.**
 
-### Known errors (Part 2, final prompt v2)
+**At-risk feedback:** all 358 explanations from the 215 at-risk students who wrote one →
+`outputs/at_risk_feedback.json`. Verdicts: 90 understood, 195 partial, 73 wrong.
+- **Only 9 new API calls were needed:** after stripping filler sign-offs, the 358 explanations are 47
+  unique texts, and 38 were already graded during evaluation.
 
+### Part 3 bonus: TF-IDF + logistic regression
+
+- **73% accuracy on a random split, 19% when whole answer templates are held out.** On the grouped
+  folds, always guessing the most common label gets 12%. The model memorises templates; it doesn't
+  learn to grade.
+- It's nearly free and fast (~50 ms per 1,000 texts), but useless on unseen wording at this data size.
+
+Cost and provider comparison for 50k students/month: `memo/research_notes_A_sources.md`. Small model vs
+LLM: `memo/research_notes_B.md`.
+
+## Assumptions
+
+- The data is synthetic (500 students, 3 lessons, June–30 Sep 2026). It's treated as read-only and
+  checked before use.
+- **Early warning = first 14 days after signup** (`WINDOW_DAYS` in `src/features.py`). Later activity is
+  not used.
+- **At-risk threshold = recall ≥ 0.8**, because a missed at-risk student is worse than an extra nudge.
+- **`understood` means the core key points are correct and specific**, as in the labels. That's not "all
+  4 key points": it differs slightly from `lessons.md` and should be agreed with the course team.
+- Filler sign-offs ("i think", "hope this is right!", "(sorry for typos)", "not sure tho") carry no
+  content. They're stripped before grading and caching.
+- Cost estimates use 85,000 LLM calls a month (50,000 students × 1.7 explanations each). They assume no
+  cache savings, since real students don't repeat templates.
+
+## Known errors
+
+**Part 2 (final prompt v2):**
 - **Vague but on-topic `partial` → `wrong` (E0274) is the most harmful error type.** Telling a partly
-  correct student they're wrong discourages exactly the at-risk students we want to keep. So precision on
-  `wrong` verdicts matters more than headline accuracy.
+  correct student they're wrong discourages exactly the at-risk students we want to keep. So precision
+  on `wrong` verdicts matters more than headline accuracy.
   - The first v2 run made this error (precision on `wrong` 0.91).
   - The final run doesn't (1.00), but the boundary is fragile.
-- **Proposed v3 rule, not implemented:** `wrong` requires a misconception or no correct claim at all;
-  vague but on-topic = `partial`. Needs a fresh labelled set to validate.
+  - **Proposed v3 rule, not implemented:** `wrong` requires a misconception or no correct claim at all;
+    vague but on-topic = `partial`. Needs a fresh labelled set to validate.
 - **Most common error: `understood` graded `partial`** (E0720, E0040, E0250, E0157, E0545; 11 of 20
   `understood` rows). Each answer misses one point the labels treat as minor.
-- **Borderline answers are unstable between runs:** E0432 (v1); E0720 and E0080 (first v2 run); E0108
-  and E0333 (final v2).
+- **Borderline answers flip between runs:** E0432 (v1); E0720 and E0080 (first v2 run); E0108 and E0333
+  (final v2).
   - Production fix: majority vote over 2–3 runs.
   - When the runs disagree, send the answer to a teacher.
+- **The accuracy numbers are optimistic.** The v2 rubric was tuned on the same 60 rows it's measured on,
+  and a fresh labelled set is needed to confirm it.
 
-**At-risk feedback:** final v2 graded all 358 explanations written by the 215 at-risk students who
-submitted one (Part 1 threshold 0.368) → `outputs/at_risk_feedback.json`.
-- Only 9 new API calls were needed: the 358 explanations are 47 unique texts, and 38 were already graded
-  during evaluation.
-- Verdicts: 90 understood, 195 partial, 73 wrong.
+**Part 1:**
+- With 125 dropouts, the fold-to-fold spread (AUC ± 0.04) is as large as the gap between neighbouring
+  time windows.
+- 42% of dropouts have already stopped by day 14, so the model is early for most students, not all.
 
 ## What I'd improve with more time
 
@@ -122,10 +179,39 @@ submitted one (Part 1 threshold 0.368) → `outputs/at_risk_feedback.json`.
   by native speakers.
 - **A fresh, larger labelled set** (a few hundred real answers, labelled independently) to measure prompts
   honestly, then test the proposed v3 rule for `wrong`.
-- **Majority vote over 2–3 runs**, and send to a teacher when they disagree, for borderline answers.
+- **Majority vote over 2–3 runs** for borderline answers, and send to a teacher when they disagree.
 - **Agree the definition of `understood` with the course team** (core points vs all 4 key points).
 - **Batch API for nightly grading** (half the cost); feedback doesn't need to be instant.
+- **Choose the Part 1 threshold inside each training fold** (nested CV), so its precision/recall isn't
+  optimistic.
+- **Validate the dropout model on a later cohort** before using it on real students.
 
-## Note on AI tools
+## AI tools used
 
-_To be filled in: which tools used and for what._
+_Draft for you to edit._
+
+- **Claude Code (Claude Opus 5.5)** was used as a pair programmer: it wrote and ran the code in `src/` and
+  the notebooks, profiled the data, and drafted the README and notebook text. I directed the decisions:
+  - the 14-day window
+  - excluding `refund_requested`
+  - recall ≥ 0.8 as the threshold
+  - the v2 rubric, and freezing v2 as the final prompt
+  - the model switch
+
+  I reviewed and edited the outputs.
+- **Claude Haiku 5.5** (via the Anthropic API) is the LLM judge in Part 2.
+- **Gemini 3.8 / 3.6 Flash** were tried for Part 2 but couldn't complete an evaluation on the free tier.
+- Research notes for Part 3: _add the tools you used and what you checked yourself._
+
+## Repo layout
+
+| Path | What |
+|---|---|
+| `notebooks/` | one notebook per part |
+| `src/` | small plain functions: `data.py` (load + logged cleaning), `features.py` (14-day features), `model.py` (Pipelines, baselines, CV), `llm_judge.py` (prompts, LLM calls, cache), `llm_eval.py` (accuracy, reports) |
+| `outputs/charts/`, `outputs/json/` | charts and JSON results (committed) |
+| `outputs/risk_scores.csv`, `outputs/at_risk_feedback.json`, `outputs/llm_eval_*.md` | Part 1 / Part 2 results (committed) |
+| `outputs/cache/` | cached LLM responses + token usage log (gitignored) |
+| `memo/` | Part 3 research memo and notes |
+| `data/raw/` | provided dataset (read-only) |
+| `CLAUDE.md` | working rules for this repo |
