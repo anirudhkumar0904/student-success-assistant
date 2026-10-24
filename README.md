@@ -14,7 +14,11 @@ production.
 
 ## How to run
 
-Tested with Python 3.12 on Windows.
+Tested with Python 3.12 on Windows, from a fresh clone.
+
+> **Windows:** clone into a short path, for example `C:\code\student-success`. Jupyter installs some very
+> long file paths, and in a deeply nested folder `pip install` fails with `WinError 206`. The alternative
+> is to enable Windows long paths.
 
 ```bash
 git clone <repo-url> && cd student-success
@@ -36,13 +40,15 @@ jupyter nbconvert --to notebook --execute --inplace notebooks/part3_bonus.ipynb 
 
 1. **Part 1** writes `outputs/risk_scores.csv` (risk score + at-risk flag per student), which Part 2
    uses, plus charts and JSON in `outputs/`. It is deterministic (seed 42).
-2. **Part 2** calls Claude Haiku 5.5. LLM responses are cached in `outputs/cache/` (gitignored), so a
-   **fresh clone makes about 170 API calls** (v1 + v2 evaluations, stability passes and at-risk
-   feedback): roughly 30–40 minutes, about $0.07. Re-runs are instant from the cache. The LLM is not fully
-   deterministic (about 95% of verdicts are identical on a re-run), so a fresh run reproduces the
-   committed `outputs/llm_eval_*.md` closely but not exactly. The provider is one line in
-   `src/llm_judge.py`: `PROVIDER, MODEL = "anthropic", "claude-haiku-5-5"`. The Gemini path also works,
-   with `GEMINI_API_KEY`.
+2. **Part 2** calls Claude Haiku 5.5. LLM responses are cached in `outputs/cache/` (gitignored).
+   - **A fresh clone makes 161 API calls:** v1 + v2 evaluations, stability passes and at-risk feedback.
+     Measured: **about 10 minutes, under $0.10.** Re-runs are instant from the cache.
+   - **The LLM is not deterministic.** A fresh run regenerates `outputs/llm_eval_*.md` with slightly
+     different numbers (see the run-to-run table under Part 2 below).
+   - **Skipped in a fresh clone:** the cell comparing v2's old and fixed feedback wording, because its
+     archive is only in the local cache.
+   - **Provider:** one line in `src/llm_judge.py`: `PROVIDER, MODEL = "anthropic", "claude-haiku-5-5"`. The
+     Gemini path also works, with `GEMINI_API_KEY`.
 3. **Part 3 bonus** trains TF-IDF + LR on the 60 labelled rows. No key needed.
 
 Keys are only read from `.env` (gitignored), never from code. `.env.example` shows the shape.
@@ -104,12 +110,18 @@ missing / contradicted) *before* choosing a verdict. Results on the 60 labelled 
 | Accuracy, 37 unique texts | 83.8% | 86.5% |
 | Precision on `wrong` verdicts (no partly correct student told "wrong") | 1.00 | 1.00 |
 | Prompt-injection attempts resisted | 3/3 | 3/3 |
-| Stability (same verdict on a re-run) | 97.3% | 94.6% |
+| Stability (same verdict on a re-run; varies by run, see below) | 97.3% | 94.6% |
 | Avg tokens per call | 1,477 | 2,332 |
+
+**Run-to-run spread.** The fresh-clone test repeated the whole evaluation from an empty cache. On unique
+texts, the committed run gave v1 83.8% / v2 86.5%; the second run gave v1 83.8% / v2 **81.1%**.
+Stability ranged from 89% to 97% across runs. **Neither prompt is reliably better on these 37 texts.**
+The committed reports are from the first run.
 
 **Why v2 is final:** accuracy is tied with v1 within noise on 37 texts. But v2 has the fixed "missed"
 wording, and per-key-point checks that make each verdict auditable. The cost is ~58% more tokens and
-slightly lower stability: still about $35/month at 50,000 students.
+slightly lower stability in the committed run (not in the re-run): still about $35/month at 50,000
+students.
 
 **Feedback-wording fix (not grading tuning):** the first v2 run's `missed` field often stated the
 correct answer. Only the wording instructions for `got_right` / `missed` / `hint` were changed: `missed`
