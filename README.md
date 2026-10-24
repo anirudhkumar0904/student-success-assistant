@@ -60,6 +60,26 @@ Provider and model are one line in `src/llm_judge.py` (`PROVIDER, MODEL = ...`);
 is kept. Production lesson, used in the Part 3 memo: newest ≠ best and a free tier is not a production
 plan — pin the model, set timeouts, keep a tested fallback, and check quotas against volume.
 
+**Part 2 prompt v1 → v2:** v2 changes only the grading rubric (v1 is kept and still runs). Two caveats:
+- **v2's accuracy is optimistic.** The rubric was tuned on the same 60 labelled rows it is measured on;
+  a fresh labelled set is needed to confirm the gain.
+- **The labels define `understood` as "core key points correct and specific", not "all 4 key points".**
+  This differs slightly from `lessons.md` ("covers the key points correctly"). v2 follows the labels;
+  in production the definition should be agreed with the course team.
+
+Results on Claude Haiku 5.5 (`outputs/llm_eval_v1.md`, `outputs/llm_eval_v2.md`):
+
+| | v1 | v2 |
+|---|---|---|
+| Accuracy, all 60 rows | 80.0% | 90.0% |
+| Accuracy, 37 unique texts | 83.8% | 91.9% |
+| Prompt-injection rows passed | 3/3 | 3/3 |
+| Stability (same verdict on a re-run) | 97.3% | 94.6% |
+| Avg tokens per call | 1,477 | 2,210 |
+
+v2 fixes most `understood → partial` errors but turns one vague-but-on-topic `partial` (E0274) into
+`wrong`.
+
 ## What I'd improve with more time
 
 _To be filled in._

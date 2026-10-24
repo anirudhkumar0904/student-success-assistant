@@ -15,6 +15,14 @@ Model `claude-haiku-5-5`, default temperature, run 2026-10-24, on the 60 labelle
 | partial | 0 | 20 | 0 |
 | wrong | 0 | 0 | 20 |
 
+## Per-class results (recall = share of each true label found; precision = share of each verdict that is right)
+
+| label | recall | precision |
+|---|---|---|
+| understood | 0.4 | 1.0 |
+| partial | 1.0 | 0.62 |
+| wrong | 1.0 | 1.0 |
+
 ## Every wrong prediction (one row per unique text; `rows` = labelled rows sharing it)
 
 | explanation_id | lesson_id | rows | explanation_text | label | verdict | key_points_covered | reasoning |

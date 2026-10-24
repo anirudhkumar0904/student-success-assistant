@@ -36,13 +36,70 @@ def confusion(df):
         .reindex(index=LABELS, columns=LABELS, fill_value=0)
 
 
+def format_checks(checks):
+    """[{'point': 1, 'status': 'covered_clearly'}, ...] -> '1 clear, 2 vague, 3 missing'."""
+    short = {"covered_clearly": "clear", "covered_vaguely": "vague", "missing": "missing",
+             "contradicted": "CONTRADICTED"}
+    return ", ".join(f"{c['point']} {short[c['status']]}" for c in checks)
+
+
 def errors_table(df):
     """One row per unique wrong prediction, with how many labelled rows share that text."""
-    wrong = df[df.label != df.verdict]
+    wrong = df[df.label != df.verdict].copy()
     counts = wrong.groupby("key").size().rename("rows")
     wrong = wrong.drop_duplicates("key").join(counts, on="key")
-    return wrong[["explanation_id", "lesson_id", "rows", "explanation_text", "label", "verdict",
-                  "key_points_covered", "reasoning"]].sort_values(["lesson_id", "label"])
+    cols = ["explanation_id", "lesson_id", "rows", "explanation_text", "label", "verdict", "key_points_covered"]
+    if "key_point_checks" in wrong:  # prompt v2 checks every key point before the verdict
+        wrong["key_point_checks"] = wrong.key_point_checks.map(format_checks)
+        cols.append("key_point_checks")
+    return wrong[cols + ["reasoning"]].sort_values(["lesson_id", "label"])
+
+
+def per_class(df):
+    """Recall (share of each true label found) and precision (share of each predicted label that is right)."""
+    rows = {}
+    for label in LABELS:
+        is_true, is_pred = df.label == label, df.verdict == label
+        rows[label] = {
+            "recall": (is_true & is_pred).sum() / is_true.sum(),
+            "precision": (is_true & is_pred).sum() / is_pred.sum() if is_pred.any() else float("nan"),
+        }
+    return pd.DataFrame(rows).T.round(2)
+
+
+def compare_versions(runs):
+    """runs = {version: {"df": ..., "stable": stability(...), "usage": usage_summary(...)}}.
+    Returns one column per prompt version."""
+    table = {}
+    for version, r in runs.items():
+        acc, classes, usage = accuracy(r["df"]), per_class(r["df"]), r["usage"].loc["all runs"]
+        column = {
+            "accuracy, all 60 rows": f"{acc['all_rows'][0]:.1%}",
+            "accuracy, unique texts": f"{acc['unique_texts'][0]:.1%} ({acc['unique_texts'][1]})",
+        }
+        for label in LABELS:
+            column[f"{label}: recall / precision"] = f"{classes.loc[label, 'recall']:.2f} / {classes.loc[label, 'precision']:.2f}"
+        column["stability (identical verdicts)"] = f"{r['stable'][0]:.1%} ({r['stable'][1]} texts)"
+        column["avg tokens per call (in + out)"] = (f"{usage.total_tokens / usage.calls:,.0f} "
+                                                    f"({usage.prompt_tokens / usage.calls:,.0f} + "
+                                                    f"{usage.output_tokens / usage.calls:,.0f})")
+        table[version] = column
+    out = pd.DataFrame(table)
+    out.index.name = "metric"
+    return out
+
+
+def verdict_changes(old, new, watch_ids=()):
+    """Unique texts whose verdict differs between two prompt versions, plus any watched ids."""
+    both = old.drop_duplicates("key").merge(new.drop_duplicates("key")[["key", "verdict"]],
+                                            on="key", suffixes=("_old", "_new"))
+    watched = both.key.isin(old[old.explanation_id.isin(watch_ids)].key)
+    changed = both.verdict_old != both.verdict_new
+    out = both[changed | watched].copy()
+    out["changed"] = out.verdict_old != out.verdict_new
+    out["now_correct"] = out.verdict_new == out.label
+    return out[["explanation_id", "lesson_id", "explanation_text", "label", "verdict_old", "verdict_new",
+                "changed", "now_correct"]].sort_values(["changed", "lesson_id"], ascending=[False, True])
 
 
 def is_injection(texts):
@@ -79,9 +136,9 @@ def usage_summary(usage_path, model, prompt_version):
     return summary
 
 
-def write_report(df, path, model, prompt_version, usage, injections, stable):
+def write_report(df, path, model, prompt_version, usage, injections, stable, extra_lines=()):
     """df = labelled rows with verdicts; injections = all injection rows (labelled or not);
-    stable = output of stability()."""
+    stable = output of stability(); extra_lines = more markdown appended at the end."""
     acc = accuracy(df)
     stable_pct, stable_n, flips = stable
     lines = [
@@ -98,6 +155,10 @@ def write_report(df, path, model, prompt_version, usage, injections, stable):
         "## Confusion matrix (rows = true label, columns = predicted)",
         "",
         md_table(confusion(df)),
+        "",
+        "## Per-class results (recall = share of each true label found; precision = share of each verdict that is right)",
+        "",
+        md_table(per_class(df).rename_axis("label")),
         "",
         "## Every wrong prediction (one row per unique text; `rows` = labelled rows sharing it)",
         "",
@@ -131,4 +192,5 @@ def write_report(df, path, model, prompt_version, usage, injections, stable):
         ]
     else:
         lines += ["_no usage logged_", ""]
+    lines += list(extra_lines)
     path.write_text("\n".join(lines), encoding="utf-8")
