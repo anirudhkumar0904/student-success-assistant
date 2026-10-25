@@ -10,7 +10,8 @@ production.
   key points, write short feedback, return structured JSON, evaluate on the 60 labelled rows, and run it
   for the at-risk students from Part 1. → `notebooks/part2_llm.ipynb`
 - **Part 3 — Research memo:** which LLM for 50k students/month, and when a small ML model beats an LLM
-  (with the TF-IDF + LogReg bonus). → `memo/`, `notebooks/part3_bonus.ipynb`
+  (with the TF-IDF + LogReg bonus). → **`memo/research_memo.md`** (2-page PDF: `memo/research_memo.pdf`),
+  `notebooks/part3_bonus.ipynb`
 
 ## How to run
 
@@ -146,8 +147,10 @@ identical. That first run scored 90.0%; the re-run from an empty cache scored 81
   learn to grade.
 - It's nearly free and fast (~50 ms per 1,000 texts), but useless on unseen wording at this data size.
 
-Cost and provider comparison for 50k students/month: `memo/research_notes_A_sources.md`. Small model vs
-LLM: `memo/research_notes_B.md`.
+**The Part 3 memo is `memo/research_memo.md`** (also as a 2-page PDF, `memo/research_memo.pdf`): which LLM
+for 50k students/month (cost, speed, quality, privacy, Indian languages, recommendation, risks) and when a
+small ML model beats an LLM. The working notes and sources behind it are in `memo/research_notes_A_sources.md`
+and `memo/research_notes_B.md`.
 
 ## Assumptions
 
@@ -203,18 +206,24 @@ LLM: `memo/research_notes_B.md`.
 
 ## AI tools used
 
-- **Claude Code (Claude Opus 5.5)** was used as a pair programmer: it wrote and ran the code in `src/` and
-  the notebooks, profiled the data, and drafted the README and notebook text. I directed the decisions:
-  - the 14-day window
-  - excluding `refund_requested`
-  - recall ≥ 0.8 as the threshold
-  - the v2 rubric, and freezing v2 as the final prompt
-  - the model switch
+I used AI tools throughout this task, as the brief allows. This is what I used and for what:
 
-  I reviewed and edited the outputs.
-- **Claude Haiku 5.5** (via the Anthropic API) is the LLM judge in Part 2.
-- **Gemini 3.8 / 3.6 Flash** were tried for Part 2 but couldn't complete an evaluation on the free tier.
-- Research notes for Part 3: _add the tools you used and what you checked yourself._
+- **Claude Code (in VS Code)** wrote most of the code: data loading and cleaning, features, the model and evaluation, the LLM judge, notebooks and this README. I gave it one step at a time, read the output of each step, and asked for changes before committing.
+- **Claude (chat)** acted as a reviewer and planner. It helped me break the task into steps, check the data for problems (the 999 scores, duplicates, the refund leak, prompt injections), check the agent's results, research Part 3 (pricing, privacy, Indian-language support, examples) and draft the research memo, which I then edited.
+- **Claude Haiku 5.5** is the LLM that grades explanations in Part 2. I first tried Gemini 3.8 Flash and 3.6 Flash, but the free tier timed out and then hit a 20-requests-a-day cap.
+
+**Decisions I made or approved after checking them against the data:**
+- excluding `refund_requested` (leaks the outcome)
+- using only the first 14 days of activity (full history leaks the outcome)
+- prioritising recall and choosing the threshold
+- dropping the random forest
+- the v2 rubric, and stopping tuning to avoid overfitting the 60 rows
+- treating a few points' difference between prompts as noise
+- the model recommendation in the memo
+
+Several of these were first suggested by the AI. I accepted them only after looking at the numbers.
+
+All results in this repo were produced by running the code. No numbers were written by hand.
 
 ## Repo layout
 
